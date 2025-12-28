@@ -226,11 +226,28 @@ def create_investor_indices_radar(indices):
     return fig
 
 
-def save_iid_data(data, file_path="F:/AI Insights Dashboard/IID_filled.json"):
-    """Save filled IID data to JSON file"""
-    with open(file_path, 'w', encoding='utf-8') as f:
+def save_iid_data(data, file_path="IID_filled.json"):
+    """Save filled IID data to JSON file in a safe, repo-relative path.
+
+    Ensures parent directories exist so writing on Streamlit Cloud or other
+    environments won't raise FileNotFoundError for non-existent folders.
+    Returns the absolute path to the saved file.
+    """
+    from pathlib import Path
+
+    p = Path(file_path).expanduser()
+    # If a directory was provided, create it. For plain filenames this is a no-op.
+    if p.parent and not p.parent.exists():
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # If mkdir fails (permissions) fall back to current working directory
+            p = Path.cwd() / p.name
+
+    with open(p, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)
-    return file_path
+
+    return str(p)
 
 
 def main():
