@@ -265,25 +265,43 @@ def main():
     with st.sidebar:
         st.header("⚙️ Configuration")
         
+        # Allow user to provide a repo-relative portfolio path or upload an Excel file
         portfolio_path = st.text_input(
-            "Portfolio Path",
-            value=r"f:\Insights\Portfolio Data_Hypothetical.xlsx"
+            "Portfolio Path (leave blank to upload)",
+            value=""
         )
+
+        uploaded_portfolio = st.file_uploader("Upload portfolio Excel (optional)", type=["xlsx", "xls"])
         
+        # Quick action: upload and immediately run analysis
+        if uploaded_portfolio is not None:
+            if st.button("Upload & Analyze"):
+                from pathlib import Path
+                up_name = getattr(uploaded_portfolio, 'name', 'uploaded_portfolio.xlsx')
+                save_to = Path.cwd() / up_name
+                try:
+                    with open(save_to, 'wb') as f:
+                        f.write(uploaded_portfolio.getbuffer())
+                    st.session_state.uploaded_portfolio_path = str(save_to)
+                    st.success(f"Uploaded and saved to {save_to}")
+                    st.session_state.show_analysis = True
+                except Exception as e:
+                    st.error(f"Failed to save uploaded file: {e}")
+
         iid_path = st.text_input(
             "IID Path",
-            value=r"F:\AI Insights Dashboard\IID_filled.json"
+            value="IID_filled.json"
         )
-        
+
         # Show IID status
         if st.session_state.iid_saved:
             st.success("✅ Investor profile saved!")
-        
+
         analyze_button = st.button("🔍 Run Analysis", type="primary", use_container_width=True)
-        
+
         if analyze_button:
             st.session_state.show_analysis = True
-        
+
         st.markdown("---")
         st.markdown("### About")
         st.info("""
@@ -547,10 +565,29 @@ def main():
         with st.spinner("🔄 Running analysis..."):
 
             try:
+                # Prefer a previously-saved uploaded file saved in session state
+                uploaded_path = st.session_state.get('uploaded_portfolio_path', None)
+                if uploaded_path:
+                    portfolio_path = uploaded_path
+                else:
+                    # If the uploader variable exists in this run, save it now as fallback
+                    if 'uploaded_portfolio' in locals() and uploaded_portfolio is not None:
+                        from pathlib import Path
+                        up_name = getattr(uploaded_portfolio, 'name', 'uploaded_portfolio.xlsx')
+                        save_to = Path.cwd() / up_name
+                        with open(save_to, 'wb') as f:
+                            f.write(uploaded_portfolio.getbuffer())
+                        portfolio_path = str(save_to)
+
+                # Require a portfolio path or uploaded file
+                if not portfolio_path:
+                    st.error("❌ No portfolio provided. Upload an Excel or set a Portfolio Path in the sidebar.")
+                    return
+
                 report = run_analysis(portfolio_path, iid_path)
-                
+
                 if not report:
-                    st.error("❌ Analysis failed. Please check the file paths.")
+                    st.error("❌ Analysis failed. Please check the file paths or uploaded portfolio.")
                     return
                 
                 # Extract data
