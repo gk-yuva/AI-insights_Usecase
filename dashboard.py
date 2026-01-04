@@ -559,6 +559,15 @@ def main():
                 st.session_state.iid_saved = True
                 st.success(f"✅ Profile saved successfully!")
                 st.info("👉 Now click '🔍 Run Analysis' in the sidebar to see your personalized results!")
+                # Also save a copy for ML recommender to pick up
+                try:
+                    from pathlib import Path
+                    import json
+                    shared = Path('data')
+                    shared.mkdir(parents=True, exist_ok=True)
+                    (shared / 'latest_iid.json').write_text(json.dumps(iid_data, indent=2))
+                except Exception:
+                    pass
     
     else:
         # Show analysis results
@@ -597,6 +606,17 @@ def main():
                 investor_profile = report.get('investor_profile', {})
                 psp_result = report.get('plan_survival_probability', {})
                 portfolio = report.get('portfolio', [])
+                # Save latest portfolio for ML recommender to consume
+                try:
+                    from pathlib import Path
+                    import json
+                    shared = Path('data')
+                    shared.mkdir(parents=True, exist_ok=True)
+                    (shared / 'latest_portfolio.json').write_text(json.dumps(portfolio, indent=2))
+                    # also save investor_profile in full form if available
+                    (shared / 'latest_investor_profile.json').write_text(json.dumps(investor_profile, indent=2))
+                except Exception:
+                    pass
                 
                 # Tab layout
                 tab1, tab2, tab3, tab4, tab5 = st.tabs([
