@@ -1,3 +1,5 @@
+import numpy as np
+from scipy.optimize import minimize
 """
 Portfolio Health Dashboard
 Interactive Streamlit dashboard for portfolio analysis
@@ -55,19 +57,12 @@ st.markdown("""
         border-radius: 0.5rem;
         border-left: 4px solid #dc3545;
     }
-    .stMetric {
-        background-color: white;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
 </style>
 """, unsafe_allow_html=True)
 
 
-@st.cache_data
 def run_analysis(portfolio_path, iid_path):
-    """Run portfolio analysis and cache results"""
+    """Run portfolio analysis"""
     analyzer = PortfolioAnalyzer(
         portfolio_path=portfolio_path,
         iid_path=iid_path,
@@ -619,13 +614,137 @@ def main():
                     pass
                 
                 # Tab layout
-                tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
                     "📊 Overview",
                     "🎯 Two-Dimensional Analysis",
                     "📈 Portfolio Quality",
                     "👤 Investor Fit",
-                    "💼 Portfolio Details"
+                    "💼 Portfolio Details",
+                    "🧮 Optimized Allocation"
                 ])
+                # TAB 6: Optimized Allocation
+                with tab6:
+                    st.header("🧮 Optimized Portfolio Allocation")
+                    if portfolio:
+                        df_portfolio = pd.DataFrame(portfolio)
+                        symbols = df_portfolio['Instrument'].tolist()
+                        n_assets = len(symbols)
+                        
+                        # Simulated returns (in production, use real price data)
+                        np.random.seed(42)
+                        returns = np.random.normal(0.001, 0.02, (252, n_assets))
+                        mean_returns = returns.mean(axis=0)
+                        cov_matrix = np.cov(returns, rowvar=False)
+                        
+                        # Calculate portfolio VaR (95% confidence)
+                        def calculate_portfolio_var(weights, returns_data, confidence=0.95):
+                            portfolio_returns = returns_data @ weights
+                            var = np.percentile(portfolio_returns, (1 - confidence) * 100)
+                            return -var  # Negative because we want to minimize risk
+                        
+                        # Optimization objectives
+                        def neg_sharpe_ratio(weights):
+                            port_return = np.dot(weights, mean_returns)
+                            port_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                            sharpe = (port_return - 0.05/252) / (port_vol + 1e-8)
+                            return -sharpe
+                        
+                        def neg_return(weights):
+                            return -np.dot(weights, mean_returns)
+                        
+                        def minimize_var(weights):
+                            return calculate_portfolio_var(weights, returns, confidence=0.95)
+                        
+                        # Constraints and bounds
+                        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+                        bounds = tuple((0, 1) for _ in range(n_assets))
+                        init_guess = np.array([1.0/n_assets]*n_assets)
+                        
+                        # User selection of optimization criteria
+                        st.subheader("Select Optimization Criteria")
+                        criteria = st.radio(
+                            "Choose your optimization objective:",
+                            ["Maximize Sharpe Ratio", "Maximize Returns", "Minimize Risk (VaR)"],
+                            index=0
+                        )
+                        
+                        # Run optimization based on criteria
+                        if criteria == "Maximize Sharpe Ratio":
+                            result = minimize(neg_sharpe_ratio, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
+                            objective_name = "Sharpe Ratio"
+                        elif criteria == "Maximize Returns":
+                            result = minimize(neg_return, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
+                            objective_name = "Expected Return"
+                        else:  # Minimize Risk (VaR)
+                            result = minimize(minimize_var, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
+                            objective_name = "Value at Risk"
+                        
+                        opt_weights = result.x if result.success else init_guess
+                        
+                        # Calculate optimized metrics
+                        opt_return = np.dot(opt_weights, mean_returns) * 252
+                        opt_vol = np.sqrt(np.dot(opt_weights.T, np.dot(cov_matrix, opt_weights))) * np.sqrt(252)
+                        opt_sharpe = (opt_return - 0.05) / (opt_vol + 1e-8)
+                        opt_var = np.percentile(returns @ opt_weights, 5) * np.sqrt(252)  # 95% VaR, annualized
+                        
+                        # Display results
+                        st.markdown(f"### ✅ Optimized for: {objective_name}")
+                        
+                        st.subheader("📊 Optimized Asset Allocation")
+                        df_opt = pd.DataFrame({
+                            'Asset': symbols,
+                            'Optimized Weight (%)': (opt_weights * 100).round(2)
+                        })
+                        st.dataframe(df_opt, use_container_width=True)
+                        
+                        # Download weights as CSV
+                        csv = df_opt.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="📥 Download Optimized Weights",
+                            data=csv,
+                            file_name=f"optimized_weights_{criteria.replace(' ', '_').lower()}.csv",
+                            mime="text/csv"
+                        )
+                        
+                        st.subheader("📈 Optimized Portfolio Metrics")
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric(
+                                "Expected Annual Return",
+                                f"{opt_return*100:.2f}%",
+                                delta="vs current portfolio" if 'metrics' in locals() else None
+                            )
+                        
+                        with col2:
+                            st.metric(
+                                "Expected Volatility",
+                                f"{opt_vol*100:.2f}%"
+                            )
+                        
+                        with col3:
+                            st.metric(
+                                "Sharpe Ratio",
+                                f"{opt_sharpe:.2f}"
+                            )
+                        
+                        with col4:
+                            st.metric(
+                                "Value at Risk (95%)",
+                                f"{abs(opt_var)*100:.2f}%"
+                            )
+                        
+                        st.markdown("---")
+                        st.info("💡 **Note**: This optimization uses simulated returns for demonstration. For production use, replace with real historical price data from your data source.")
+                        
+                        # Optimization details
+                        with st.expander("📋 Optimization Details"):
+                            st.write(f"**Optimization Status**: {'✅ Successful' if result.success else '⚠️ Not fully converged'}")
+                            st.write(f"**Optimization Method**: Sequential Least Squares Programming (SLSQP)")
+                            st.write(f"**Constraints**: Asset weights sum to 1.0, no shorting allowed (0 ≤ weight ≤ 1)")
+                            st.write(f"**Number of Assets**: {n_assets}")
+                    else:
+                        st.warning("No portfolio data available for optimization.")
                 
                 # TAB 1: Overview
                 with tab1:
