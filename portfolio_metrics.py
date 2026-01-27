@@ -27,13 +27,18 @@ class PortfolioMetrics:
         Calculate annualized return
         
         Args:
-            returns: Series of daily returns
+            returns: Series of daily returns (as decimals, e.g., 0.01 = 1%)
             
         Returns:
             Annualized return as percentage
         """
         if returns is None or len(returns) == 0:
             return None
+        
+        # Ensure returns are in decimal format (not percentages)
+        # If returns appear to be percentages (> 1), convert to decimals
+        if returns.mean() > 1:
+            returns = returns / 100
         
         # Compound returns and annualize
         cumulative_return = (1 + returns).prod() - 1

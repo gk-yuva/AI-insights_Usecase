@@ -61,12 +61,63 @@ class PortfolioAnalyzer:
         print("LOADING PORTFOLIO DATA")
         print("=" * 80)
         
-        self.portfolio_df = pd.read_excel(
-            self.portfolio_path, 
-            sheet_name='Portfolio Data_Hypothetical'
-        )
+        print(f"Attempting to load: {self.portfolio_path}")
         
-        print(f"\nPortfolio loaded: {len(self.portfolio_df)} holdings")
+        # Get all available sheet names
+        try:
+            xl_file = pd.ExcelFile(self.portfolio_path)
+            available_sheets = xl_file.sheet_names
+            print(f"Available sheets: {available_sheets}")
+        except Exception as e:
+            print(f"Error reading Excel file: {e}")
+            raise
+        
+        # Try multiple sheet names for compatibility
+        sheet_names_to_try = [
+            'Portfolio Data_Hypothetical',
+            'Portfolio Data',
+            'Portfolio',
+            'Holdings',
+            'holdings (3)',  # Common default name
+            None  # Use first sheet if specific names not found
+        ]
+        
+        self.portfolio_df = None
+        loaded_sheet = None
+        
+        for sheet_name in sheet_names_to_try:
+            try:
+                if sheet_name is None and len(available_sheets) > 0:
+                    # Use the first available sheet
+                    sheet_name = available_sheets[0]
+                    self.portfolio_df = pd.read_excel(self.portfolio_path, sheet_name=sheet_name)
+                    loaded_sheet = sheet_name
+                    print(f"✓ Loaded first sheet: '{sheet_name}'")
+                elif sheet_name in available_sheets:
+                    self.portfolio_df = pd.read_excel(self.portfolio_path, sheet_name=sheet_name)
+                    loaded_sheet = sheet_name
+                    print(f"✓ Loaded sheet: '{sheet_name}'")
+                else:
+                    continue
+                break
+            except Exception as e:
+                print(f"Failed to load sheet '{sheet_name}': {e}")
+                continue
+        
+        if self.portfolio_df is None:
+            raise ValueError(f"Could not load any compatible sheet from {self.portfolio_path}. Available sheets: {available_sheets}")
+        
+        # Add missing 'Sector' column if it doesn't exist
+        if 'Sector' not in self.portfolio_df.columns:
+            print("⚠️ 'Sector' column not found. Adding default sector 'Unclassified'")
+            self.portfolio_df['Sector'] = 'Unclassified'
+        
+        # Add missing 'Asset Class' column if it doesn't exist
+        if 'Asset Class' not in self.portfolio_df.columns:
+            print("⚠️ 'Asset Class' column not found. Adding default asset class 'Equity'")
+            self.portfolio_df['Asset Class'] = 'Equity'
+        
+        print(f"\nPortfolio loaded from sheet '{loaded_sheet}': {len(self.portfolio_df)} holdings")
         print(f"Total value: ₹{self.portfolio_df['Cur. val'].sum():,.2f}")
         print(f"\nHoldings:")
         for idx, row in self.portfolio_df.iterrows():

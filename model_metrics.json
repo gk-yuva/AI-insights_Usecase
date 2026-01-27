@@ -1,0 +1,20 @@
+{
+  "phase": 5,
+  "model_type": "XGBClassifier",
+  "training_samples": 44,
+  "test_samples": 19,
+  "features": 36,
+  "metrics": {
+    "roc_auc": 0.9852941176470589,
+    "f1_score": 0.9375,
+    "precision": 1.0,
+    "recall": 0.8823529411764706,
+    "accuracy": 0.8947368421052632,
+    "specificity": 1.0,
+    "true_positives": 15.0,
+    "true_negatives": 2.0,
+    "false_positives": 0.0,
+    "false_negatives": 2.0
+  },
+  "timestamp": "2026-01-22T13:05:52.517821"
+}
