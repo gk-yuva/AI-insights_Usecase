@@ -13,6 +13,7 @@ from datetime import datetime
 import json
 
 from portfolio_analyzer import PortfolioAnalyzer
+from portfolio_optimizer import PortfolioOptimizer, create_optimizer_from_analysis_result
 
 
 # Page configuration
@@ -280,6 +281,7 @@ def main():
                     st.session_state.uploaded_portfolio_path = str(save_to)
                     st.success(f"Uploaded and saved to {save_to}")
                     st.session_state.show_analysis = True
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Failed to save uploaded file: {e}")
 
@@ -292,10 +294,11 @@ def main():
         if st.session_state.iid_saved:
             st.success("✅ Investor profile saved!")
 
-        analyze_button = st.button("🔍 Run Analysis", type="primary", use_container_width=True)
+        analyze_button = st.button("🔍 Run Analysis", type="primary")
 
         if analyze_button:
             st.session_state.show_analysis = True
+            st.rerun()
 
         st.markdown("---")
         st.markdown("### About")
@@ -462,7 +465,7 @@ def main():
                     default=["market_crash", "income_loss"]
                 )
             
-            submitted = st.form_submit_button("💾 Save & Continue", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("💾 Save & Continue", type="primary")
             
             if submitted:
                 # Build IID JSON
@@ -566,9 +569,8 @@ def main():
     
     else:
         # Show analysis results
-        with st.spinner("🔄 Running analysis..."):
-
-            try:
+        try:
+            with st.spinner("🔄 Running analysis..."):
                 # Prefer a previously-saved uploaded file saved in session state
                 uploaded_path = st.session_state.get('uploaded_portfolio_path', None)
                 if uploaded_path:
@@ -586,13 +588,13 @@ def main():
                 # Require a portfolio path or uploaded file
                 if not portfolio_path:
                     st.error("❌ No portfolio provided. Upload an Excel or set a Portfolio Path in the sidebar.")
-                    return
+                    st.stop()
 
                 report = run_analysis(portfolio_path, iid_path)
 
                 if not report:
                     st.error("❌ Analysis failed. Please check the file paths or uploaded portfolio.")
-                    return
+                    st.stop()
                 
                 # Extract data
                 metrics = report.get('metrics', {})
@@ -613,388 +615,572 @@ def main():
                 except Exception:
                     pass
                 
-                # Tab layout
-                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-                    "📊 Overview",
-                    "🎯 Two-Dimensional Analysis",
-                    "📈 Portfolio Quality",
-                    "👤 Investor Fit",
-                    "💼 Portfolio Details",
-                    "🧮 Optimized Allocation"
-                ])
-                # TAB 6: Optimized Allocation
-                with tab6:
-                    st.header("🧮 Optimized Portfolio Allocation")
-                    if portfolio:
-                        df_portfolio = pd.DataFrame(portfolio)
-                        symbols = df_portfolio['Instrument'].tolist()
-                        n_assets = len(symbols)
-                        
-                        # Simulated returns (in production, use real price data)
-                        np.random.seed(42)
-                        returns = np.random.normal(0.001, 0.02, (252, n_assets))
-                        mean_returns = returns.mean(axis=0)
-                        cov_matrix = np.cov(returns, rowvar=False)
-                        
-                        # Calculate portfolio VaR (95% confidence)
-                        def calculate_portfolio_var(weights, returns_data, confidence=0.95):
-                            portfolio_returns = returns_data @ weights
-                            var = np.percentile(portfolio_returns, (1 - confidence) * 100)
-                            return -var  # Negative because we want to minimize risk
-                        
-                        # Optimization objectives
-                        def neg_sharpe_ratio(weights):
-                            port_return = np.dot(weights, mean_returns)
-                            port_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-                            sharpe = (port_return - 0.05/252) / (port_vol + 1e-8)
-                            return -sharpe
-                        
-                        def neg_return(weights):
-                            return -np.dot(weights, mean_returns)
-                        
-                        def minimize_var(weights):
-                            return calculate_portfolio_var(weights, returns, confidence=0.95)
-                        
-                        # Constraints and bounds
-                        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-                        bounds = tuple((0, 1) for _ in range(n_assets))
-                        init_guess = np.array([1.0/n_assets]*n_assets)
-                        
-                        # User selection of optimization criteria
-                        st.subheader("Select Optimization Criteria")
-                        criteria = st.radio(
-                            "Choose your optimization objective:",
-                            ["Maximize Sharpe Ratio", "Maximize Returns", "Minimize Risk (VaR)"],
-                            index=0
-                        )
-                        
-                        # Run optimization based on criteria
-                        if criteria == "Maximize Sharpe Ratio":
-                            result = minimize(neg_sharpe_ratio, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
-                            objective_name = "Sharpe Ratio"
-                        elif criteria == "Maximize Returns":
-                            result = minimize(neg_return, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
-                            objective_name = "Expected Return"
-                        else:  # Minimize Risk (VaR)
-                            result = minimize(minimize_var, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
-                            objective_name = "Value at Risk"
-                        
-                        opt_weights = result.x if result.success else init_guess
-                        
-                        # Calculate optimized metrics
-                        opt_return = np.dot(opt_weights, mean_returns) * 252
-                        opt_vol = np.sqrt(np.dot(opt_weights.T, np.dot(cov_matrix, opt_weights))) * np.sqrt(252)
-                        opt_sharpe = (opt_return - 0.05) / (opt_vol + 1e-8)
-                        opt_var = np.percentile(returns @ opt_weights, 5) * np.sqrt(252)  # 95% VaR, annualized
-                        
-                        # Display results
-                        st.markdown(f"### ✅ Optimized for: {objective_name}")
-                        
-                        st.subheader("📊 Optimized Asset Allocation")
-                        df_opt = pd.DataFrame({
-                            'Asset': symbols,
-                            'Optimized Weight (%)': (opt_weights * 100).round(2)
-                        })
-                        st.dataframe(df_opt, use_container_width=True)
-                        
-                        # Download weights as CSV
-                        csv = df_opt.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Download Optimized Weights",
-                            data=csv,
-                            file_name=f"optimized_weights_{criteria.replace(' ', '_').lower()}.csv",
-                            mime="text/csv"
-                        )
-                        
-                        st.subheader("📈 Optimized Portfolio Metrics")
-                        col1, col2, col3, col4 = st.columns(4)
-                        
-                        with col1:
-                            st.metric(
-                                "Expected Annual Return",
-                                f"{opt_return*100:.2f}%",
-                                delta="vs current portfolio" if 'metrics' in locals() else None
-                            )
-                        
-                        with col2:
-                            st.metric(
-                                "Expected Volatility",
-                                f"{opt_vol*100:.2f}%"
-                            )
-                        
-                        with col3:
-                            st.metric(
-                                "Sharpe Ratio",
-                                f"{opt_sharpe:.2f}"
-                            )
-                        
-                        with col4:
-                            st.metric(
-                                "Value at Risk (95%)",
-                                f"{abs(opt_var)*100:.2f}%"
-                            )
-                        
-                        st.markdown("---")
-                        st.info("💡 **Note**: This optimization uses simulated returns for demonstration. For production use, replace with real historical price data from your data source.")
-                        
-                        # Optimization details
-                        with st.expander("📋 Optimization Details"):
-                            st.write(f"**Optimization Status**: {'✅ Successful' if result.success else '⚠️ Not fully converged'}")
-                            st.write(f"**Optimization Method**: Sequential Least Squares Programming (SLSQP)")
-                            st.write(f"**Constraints**: Asset weights sum to 1.0, no shorting allowed (0 ≤ weight ≤ 1)")
-                            st.write(f"**Number of Assets**: {n_assets}")
-                    else:
-                        st.warning("No portfolio data available for optimization.")
+                # Extract scores for use across tabs
+                pqs_score = pqs_result.get('pqs_score', 0)
+                ifs_score = ifs_result.get('ifs_score', 0)
+                psp_score = psp_result.get('psp_score', 0)
+            
+            # Tab layout - MUST be outside spinner context
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+                "📊 Overview",
+                "🎯 Two-Dimensional Analysis",
+                "📈 Portfolio Quality",
+                "👤 Investor Fit",
+                "💼 Portfolio Details",
+                "🧮 Optimized Allocation",
+                "🎯 Asset Recommendations"
+            ])
+            # TAB 1: Overview
+            with tab1:
+                st.header("Portfolio Overview")
                 
-                # TAB 1: Overview
-                with tab1:
-                    st.header("Portfolio Overview")
+                # Key metrics
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric(
+                        "Portfolio Value",
+                        f"₹{sum([p.get('Cur. val', 0) for p in portfolio]):,.0f}",
+                        delta=f"{sum([p.get('P&L', 0) for p in portfolio]):,.0f}"
+                    )
+                
+                with col2:
+                    st.metric(
+                        "Annual Return",
+                        f"{metrics.get('annual_return', 0)*100:.2f}%",
+                        delta="vs 7.38% benchmark"
+                    )
+                
+                with col3:
+                    st.metric(
+                        "Sharpe Ratio",
+                        f"{metrics.get('sharpe_ratio', 0):.2f}",
+                        delta="Risk-adjusted"
+                    )
+                
+                with col4:
+                    health_score = report.get('health_classification', {}).get('overall_score', 0)
+                    st.metric(
+                        "Health Score",
+                        f"{health_score:.1f}/100",
+                        delta=report.get('health_classification', {}).get('status', 'Unknown')
+                    )
+                
+                st.markdown("---")
+                
+                # Holdings table
+                st.subheader("📋 Holdings")
+                if portfolio:
+                    df_portfolio = pd.DataFrame(portfolio)
+                    st.dataframe(
+                        df_portfolio[['Instrument', 'Qty.', 'LTP', 'Cur. val', 'P&L', 'Net chg.']],
+                        width='stretch'
+                    )
+                
+                # Performance metrics chart
+                st.plotly_chart(create_metrics_comparison(metrics), width='stretch')
+            
+            # TAB 2: Two-Dimensional Analysis
+            with tab2:
+                st.header("🎯 Two-Dimensional Analysis")
+                
+                # Top scores
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.plotly_chart(
+                        create_gauge_chart(pqs_score, "Portfolio Quality Score"),
+                        width='stretch'
+                    )
+                
+                with col2:
+                    st.plotly_chart(
+                        create_gauge_chart(ifs_score, "Investor Fit Score"),
+                        width='stretch'
+                    )
+                
+                with col3:
+                    st.plotly_chart(
+                        create_gauge_chart(psp_score, "Plan Survival Probability"),
+                        width='stretch'
+                    )
+                
+                # Quadrant chart
+                st.plotly_chart(
+                    create_quadrant_chart(pqs_score, ifs_score),
+                    width='stretch'
+                )
+                
+                # Positioning message
+                if pqs_score >= 65 and ifs_score >= 65:
+                    st.success("✅ **IDEAL ZONE**: Excellent portfolio that is well-suited for you!")
+                elif pqs_score >= 65 and ifs_score < 65:
+                    st.warning("⚠️ **GOOD PORTFOLIO, POOR FIT**: Strong performance, but misaligned with your profile")
+                elif pqs_score < 65 and ifs_score >= 65:
+                    st.warning("⚠️ **POOR PORTFOLIO, GOOD FIT**: Portfolio matches your profile but has performance issues")
+                else:
+                    st.error("❌ **NEEDS IMPROVEMENT**: Both quality and fit need attention")
+                
+                # PSP interpretation
+                st.markdown("---")
+                st.subheader("⭐ Plan Survival Analysis")
+                st.info(psp_result.get('interpretation', ''))
+                st.caption(f"**Risk Level**: {psp_result.get('risk_level', 'Unknown')}")
+            
+            # TAB 3: Portfolio Quality Score
+            with tab3:
+                st.header("📈 Portfolio Quality Score (PQS)")
+                
+                st.metric(
+                    "Overall PQS",
+                    f"{pqs_score:.1f}/100",
+                    delta=pqs_result.get('category', 'Unknown')
+                )
+                
+                st.info(pqs_result.get('interpretation', ''))
+                
+                # Component breakdown
+                st.subheader("Component Scores")
+                
+                components = pqs_result.get('components', {})
+                weights = pqs_result.get('weights', {})
+                
+                for component, score in components.items():
+                    weight = weights.get(component, 0)
+                    col1, col2, col3 = st.columns([3, 2, 1])
                     
-                    # Key metrics
+                    with col1:
+                        st.write(f"**{component.replace('_', ' ').title()}**")
+                    
+                    with col2:
+                        st.progress(score / 100)
+                    
+                    with col3:
+                        st.write(f"{score:.1f}/100 ({weight}%)")
+                
+                # Risk metrics
+                st.markdown("---")
+                st.subheader("⚠️ Risk Metrics")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("VaR (95%)", f"{metrics.get('var_95', 0)*100:.2f}%")
+                    st.metric("VaR (99%)", f"{metrics.get('var_99', 0)*100:.2f}%")
+                
+                with col2:
+                    st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0)*100:.2f}%")
+                    st.metric("Volatility", f"{metrics.get('volatility', 0)*100:.2f}%")
+                
+                with col3:
+                    st.metric("Beta", f"{metrics.get('beta', 0):.3f}")
+                    st.metric("Jensen's Alpha", f"{metrics.get('jensen_alpha', 0)*100:.2f}%")
+            
+            # TAB 4: Investor Fit Score
+            with tab4:
+                st.header("👤 Investor Fit Score (IFS)")
+                
+                st.metric(
+                    "Overall IFS",
+                    f"{ifs_score:.1f}/100",
+                    delta=ifs_result.get('category', 'Unknown')
+                )
+                
+                st.info(ifs_result.get('interpretation', ''))
+                
+                # Investor indices radar
+                indices = investor_profile.get('indices', {})
+                st.plotly_chart(
+                    create_investor_indices_radar(indices),
+                    width='stretch'
+                )
+                
+                # Investor indices details
+                st.subheader("📊 Investor Profile Indices")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.metric("Risk Capacity Index", f"{indices.get('risk_capacity_index', 0):.1f}/100")
+                    st.caption("Financial ability to bear risk")
+                    
+                    st.metric("Risk Tolerance Index", f"{indices.get('risk_tolerance_index', 0):.1f}/100")
+                    st.caption("Psychological willingness to accept risk")
+                
+                with col2:
+                    st.metric("Behavioral Fragility", f"{indices.get('behavioral_fragility_index', 0):.1f}/100")
+                    st.caption("Likelihood of abandoning plan (lower is better)")
+                    
+                    st.metric("Time Horizon Strength", f"{indices.get('time_horizon_strength', 0):.1f}/100")
+                    st.caption("Ability to stay invested long-term")
+                
+                # Mismatches
+                st.markdown("---")
+                st.subheader("⚠️ Identified Mismatches")
+                
+                mismatches = ifs_result.get('mismatches', [])
+                if mismatches:
+                    for mismatch in mismatches:
+                        severity = mismatch.get('severity', 0)
+                        if severity > 30:
+                            st.error(f"❌ {mismatch.get('message', '')}")
+                        elif severity > 15:
+                            st.warning(f"⚠️ {mismatch.get('message', '')}")
+                        else:
+                            st.info(f"ℹ️ {mismatch.get('message', '')}")
+                else:
+                    st.success("✅ No significant mismatches detected")
+                
+                # Diagnostics
+                st.markdown("---")
+                st.subheader("📋 Fit Diagnostics")
+                
+                for diagnostic in ifs_result.get('diagnostics', []):
+                    if "❌" in diagnostic:
+                        st.error(diagnostic)
+                    elif "⚠️" in diagnostic:
+                        st.warning(diagnostic)
+                    else:
+                        st.success(diagnostic)
+            
+            # TAB 5: Portfolio Details
+            with tab5:
+                st.header("💼 Complete Portfolio Details")
+                if portfolio:
+                    df_full = pd.DataFrame(portfolio)
+                    st.dataframe(df_full, width='stretch')
+                    
+                    # Download button
+                    csv = df_full.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download Portfolio Data",
+                        data=csv,
+                        file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                
+                # Complete report
+                st.markdown("---")
+                st.subheader("📄 Complete Analysis Report")
+                
+                with st.expander("View JSON Report"):
+                    st.json(report)
+            
+            # TAB 6: Optimized Allocation
+            with tab6:
+                st.header("🧮 Optimized Portfolio Allocation")
+                if portfolio:
+                    df_portfolio = pd.DataFrame(portfolio)
+                    symbols = df_portfolio['Instrument'].tolist()
+                    n_assets = len(symbols)
+                    
+                    # Simulated returns (in production, use real price data)
+                    np.random.seed(42)
+                    returns = np.random.normal(0.001, 0.02, (252, n_assets))
+                    mean_returns = returns.mean(axis=0)
+                    cov_matrix = np.cov(returns, rowvar=False)
+                    
+                    # Calculate portfolio VaR (95% confidence)
+                    def calculate_portfolio_var(weights, returns_data, confidence=0.95):
+                        portfolio_returns = returns_data @ weights
+                        var = np.percentile(portfolio_returns, (1 - confidence) * 100)
+                        return -var  # Negative because we want to minimize risk
+                    
+                    # Optimization objectives
+                    def neg_sharpe_ratio(weights):
+                        port_return = np.dot(weights, mean_returns)
+                        port_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                        sharpe = (port_return - 0.05/252) / (port_vol + 1e-8)
+                        return -sharpe
+                    
+                    def neg_return(weights):
+                        return -np.dot(weights, mean_returns)
+                    
+                    def minimize_var(weights):
+                        return calculate_portfolio_var(weights, returns, confidence=0.95)
+                    
+                    # Constraints and bounds
+                    constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+                    bounds = tuple((0, 1) for _ in range(n_assets))
+                    init_guess = np.array([1.0/n_assets]*n_assets)
+                    
+                    # User selection of optimization criteria
+                    st.subheader("Select Optimization Criteria")
+                    criteria = st.radio(
+                        "Choose your optimization objective:",
+                        ["Maximize Sharpe Ratio", "Maximize Returns", "Minimize Risk (VaR)"],
+                        index=0
+                    )
+                    
+                    # Run optimization based on criteria
+                    if criteria == "Maximize Sharpe Ratio":
+                        result = minimize(neg_sharpe_ratio, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
+                        objective_name = "Sharpe Ratio"
+                    elif criteria == "Maximize Returns":
+                        result = minimize(neg_return, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
+                        objective_name = "Expected Return"
+                    else:  # Minimize Risk (VaR)
+                        result = minimize(minimize_var, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
+                        objective_name = "Value at Risk"
+                    
+                    opt_weights = result.x if result.success else init_guess
+                    
+                    # Calculate optimized metrics
+                    opt_return = np.dot(opt_weights, mean_returns) * 252
+                    opt_vol = np.sqrt(np.dot(opt_weights.T, np.dot(cov_matrix, opt_weights))) * np.sqrt(252)
+                    opt_sharpe = (opt_return - 0.05) / (opt_vol + 1e-8)
+                    opt_var = np.percentile(returns @ opt_weights, 5) * np.sqrt(252)  # 95% VaR, annualized
+                    
+                    # Display results
+                    st.markdown(f"### ✅ Optimized for: {objective_name}")
+                    
+                    st.subheader("📊 Optimized Asset Allocation")
+                    df_opt = pd.DataFrame({
+                        'Asset': symbols,
+                        'Optimized Weight (%)': (opt_weights * 100).round(2)
+                    })
+                    st.dataframe(df_opt, width='stretch')
+                    
+                    # Download weights as CSV
+                    csv = df_opt.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download Optimized Weights",
+                        data=csv,
+                        file_name=f"optimized_weights_{criteria.replace(' ', '_').lower()}.csv",
+                        mime="text/csv"
+                    )
+                    
+                    st.subheader("📈 Optimized Portfolio Metrics")
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
                         st.metric(
-                            "Portfolio Value",
-                            f"₹{sum([p.get('Cur. val', 0) for p in portfolio]):,.0f}",
-                            delta=f"{sum([p.get('P&L', 0) for p in portfolio]):,.0f}"
+                            "Expected Annual Return",
+                            f"{opt_return*100:.2f}%",
+                            delta="vs current portfolio" if 'metrics' in locals() else None
                         )
                     
                     with col2:
                         st.metric(
-                            "Annual Return",
-                            f"{metrics.get('annual_return', 0)*100:.2f}%",
-                            delta="vs 7.38% benchmark"
+                            "Expected Volatility",
+                            f"{opt_vol*100:.2f}%"
                         )
                     
                     with col3:
                         st.metric(
                             "Sharpe Ratio",
-                            f"{metrics.get('sharpe_ratio', 0):.2f}",
-                            delta="Risk-adjusted"
+                            f"{opt_sharpe:.2f}"
                         )
                     
                     with col4:
-                        health_score = report.get('health_classification', {}).get('overall_score', 0)
                         st.metric(
-                            "Health Score",
-                            f"{health_score:.1f}/100",
-                            delta=report.get('health_classification', {}).get('status', 'Unknown')
+                            "Value at Risk (95%)",
+                            f"{abs(opt_var)*100:.2f}%"
                         )
                     
                     st.markdown("---")
+                    st.info("💡 **Note**: This optimization uses simulated returns for demonstration. For production use, replace with real historical price data from your data source.")
                     
-                    # Holdings table
-                    st.subheader("📋 Holdings")
-                    if portfolio:
-                        df_portfolio = pd.DataFrame(portfolio)
-                        st.dataframe(
-                            df_portfolio[['Instrument', 'Qty.', 'LTP', 'Cur. val', 'P&L', 'Net chg.']],
-                            use_container_width=True
-                        )
-                    
-                    # Performance metrics chart
-                    st.plotly_chart(create_metrics_comparison(metrics), use_container_width=True)
+                    # Optimization details
+                    with st.expander("📋 Optimization Details"):
+                        st.write(f"**Optimization Status**: {'✅ Successful' if result.success else '⚠️ Not fully converged'}")
+                        st.write(f"**Optimization Method**: Sequential Least Squares Programming (SLSQP)")
+                        st.write(f"**Constraints**: Asset weights sum to 1.0, no shorting allowed (0 ≤ weight ≤ 1)")
+                        st.write(f"**Number of Assets**: {n_assets}")
+                else:
+                    st.warning("No portfolio data available for optimization.")
+            
+            # TAB 7: Asset Recommendations
+            with tab7:
+                st.header("🎯 Asset Recommendations")
+                st.markdown("Based on your portfolio, investor profile, and investment objective, here are personalized recommendations for assets to add or drop.")
                 
-                # TAB 2: Two-Dimensional Analysis
-                with tab2:
-                    st.header("🎯 Two-Dimensional Analysis")
+                try:
+                    # Create optimizer from analysis result
+                    optimizer = create_optimizer_from_analysis_result(report)
                     
-                    # Top scores
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        pqs_score = pqs_result.get('pqs_score', 0)
-                        st.plotly_chart(
-                            create_gauge_chart(pqs_score, "Portfolio Quality Score"),
-                            use_container_width=True
-                        )
-                    
-                    with col2:
-                        ifs_score = ifs_result.get('ifs_score', 0)
-                        st.plotly_chart(
-                            create_gauge_chart(ifs_score, "Investor Fit Score"),
-                            use_container_width=True
-                        )
-                    
-                    with col3:
-                        psp_score = psp_result.get('psp_score', 0)
-                        st.plotly_chart(
-                            create_gauge_chart(psp_score, "Plan Survival Probability"),
-                            use_container_width=True
-                        )
-                    
-                    # Quadrant chart
-                    st.plotly_chart(
-                        create_quadrant_chart(pqs_score, ifs_score),
-                        use_container_width=True
-                    )
-                    
-                    # Positioning message
-                    if pqs_score >= 65 and ifs_score >= 65:
-                        st.success("✅ **IDEAL ZONE**: Excellent portfolio that is well-suited for you!")
-                    elif pqs_score >= 65 and ifs_score < 65:
-                        st.warning("⚠️ **GOOD PORTFOLIO, POOR FIT**: Strong performance, but misaligned with your profile")
-                    elif pqs_score < 65 and ifs_score >= 65:
-                        st.warning("⚠️ **POOR PORTFOLIO, GOOD FIT**: Portfolio matches your profile but has performance issues")
+                    if optimizer is None:
+                        st.error("Could not generate recommendations. Insufficient data.")
                     else:
-                        st.error("❌ **NEEDS IMPROVEMENT**: Both quality and fit need attention")
-                    
-                    # PSP interpretation
-                    st.markdown("---")
-                    st.subheader("⭐ Plan Survival Analysis")
-                    st.info(psp_result.get('interpretation', ''))
-                    st.caption(f"**Risk Level**: {psp_result.get('risk_level', 'Unknown')}")
-                
-                # TAB 3: Portfolio Quality Score
-                with tab3:
-                    st.header("📈 Portfolio Quality Score (PQS)")
-                    
-                    st.metric(
-                        "Overall PQS",
-                        f"{pqs_score:.1f}/100",
-                        delta=pqs_result.get('category', 'Unknown')
-                    )
-                    
-                    st.info(pqs_result.get('interpretation', ''))
-                    
-                    # Component breakdown
-                    st.subheader("Component Scores")
-                    
-                    components = pqs_result.get('components', {})
-                    weights = pqs_result.get('weights', {})
-                    
-                    for component, score in components.items():
-                        weight = weights.get(component, 0)
-                        col1, col2, col3 = st.columns([3, 2, 1])
+                        progress = st.progress(0)
+                        status = st.empty()
+                        
+                        status.info("🔍 Analyzing asset universe (this may take a moment)...")
+                        progress.progress(10)
+                        
+                        try:
+                            # Get portfolio returns for correlation analysis
+                            portfolio_returns_data = []
+                            for holding in portfolio:
+                                try:
+                                    symbol = holding['Instrument']
+                                    price_data = optimizer.data_fetcher.fetch_price_data(symbol, exchange='NSE_EQ')
+                                    if price_data is not None and len(price_data) > 0:
+                                        returns = price_data.pct_change().dropna()
+                                        portfolio_returns_data.append(returns)
+                                except:
+                                    pass
+                            
+                            progress.progress(30)
+                            
+                            # Combine portfolio returns
+                            if portfolio_returns_data:
+                                portfolio_returns = pd.concat(portfolio_returns_data, axis=1).mean(axis=1)
+                            else:
+                                portfolio_returns = pd.Series()
+                            
+                            progress.progress(50)
+                            status.info("🔍 Scoring assets and generating recommendations...")
+                            
+                            # Generate recommendations
+                            recommendations = optimizer.generate_recommendations(
+                                portfolio_returns=portfolio_returns,
+                                current_holdings_df=None,
+                                max_additions=5,
+                                max_removals=3
+                            )
+                            
+                            progress.progress(90)
+                        except Exception as e:
+                            st.error(f"Error analyzing assets: {str(e)}")
+                            progress.progress(100)
+                            status.empty()
+                            import traceback
+                            with st.expander("Show Error Details"):
+                                st.code(traceback.format_exc())
+                            st.stop()
+                        
+                        progress.progress(100)
+                        status.empty()
+                        
+                        # Display recommendations
+                        st.subheader("📊 Recommendation Summary")
+                        
+                        col1, col2 = st.columns(2)
                         
                         with col1:
-                            st.write(f"**{component.replace('_', ' ').title()}**")
+                            st.metric(
+                                "Assets to Add",
+                                len(recommendations.get('assets_to_add', []))
+                            )
                         
                         with col2:
-                            st.progress(score / 100)
+                            st.metric(
+                                "Assets to Drop",
+                                len(recommendations.get('assets_to_drop', []))
+                            )
+                        
+                        st.markdown("---")
+                        
+                        # Assets to ADD
+                        st.subheader("✅ Recommended Assets to ADD")
+                        st.info(recommendations.get('rationale', {}).get('why_add', ''))
+                        
+                        assets_to_add = recommendations.get('assets_to_add', [])
+                        
+                        if assets_to_add:
+                            for idx, asset in enumerate(assets_to_add, 1):
+                                with st.expander(f"#{idx} {asset['symbol']} - Score: {asset['score']:.0f}/100"):
+                                    col1, col2, col3 = st.columns(3)
+                                    
+                                    with col1:
+                                        st.metric("Recommendation Strength", asset.get('recommendation_strength', 'N/A'))
+                                        metrics = asset.get('metrics', {})
+                                        st.metric("Annual Return", f"{metrics.get('returns', 0):.1f}%")
+                                        st.metric("Sharpe Ratio", f"{metrics.get('sharpe', 0):.2f}")
+                                    
+                                    with col2:
+                                        st.metric("Volatility", f"{metrics.get('volatility', 0):.1f}%")
+                                        st.metric("Sortino Ratio", f"{metrics.get('sortino', 0):.2f}")
+                                        st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0):.1f}%")
+                                    
+                                    with col3:
+                                        st.write("**Rationale:**")
+                                        for reason in asset.get('rationale', []):
+                                            st.write(reason)
+                        else:
+                            st.info("No strong candidates to add at this time. Portfolio is well-diversified.")
+                        
+                        st.markdown("---")
+                        
+                        # Assets to DROP
+                        st.subheader("❌ Recommended Assets to DROP")
+                        st.warning(recommendations.get('rationale', {}).get('why_drop', ''))
+                        
+                        assets_to_drop = recommendations.get('assets_to_drop', [])
+                        
+                        if assets_to_drop:
+                            drop_df = pd.DataFrame([
+                                {
+                                    'Symbol': a['symbol'],
+                                    'Current Weight (%)': f"{a['weight']:.1f}%",
+                                    'Asset Return': f"{a['asset_return']:.1f}%",
+                                    'Underperformance': f"{a['underperformance']:.2f}",
+                                    'Action': a['recommendation']
+                                }
+                                for a in assets_to_drop
+                            ])
+                            st.dataframe(drop_df, width='stretch')
+                        else:
+                            st.success("✅ All current holdings are performing adequately!")
+                        
+                        st.markdown("---")
+                        
+                        # Implementation Strategy
+                        st.subheader("📋 Implementation Strategy")
+                        
+                        strategy = recommendations.get('implementation_strategy', {})
+                        
+                        for phase_key in ['phase_1', 'phase_2', 'phase_3']:
+                            phase = strategy.get(phase_key, {})
+                            if phase:
+                                with st.expander(f"📌 {phase.get('title', '')}"):
+                                    for action in phase.get('actions', []):
+                                        st.write(f"• {action}")
+                        
+                        st.markdown("---")
+                        
+                        # Expected Impact
+                        st.subheader("📈 Expected Impact on Portfolio")
+                        
+                        impact = recommendations.get('expected_impact', {})
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric(
+                                "Return Improvement",
+                                f"{impact.get('expected_return_improvement', 0):.2f}%"
+                            )
+                        
+                        with col2:
+                            st.metric(
+                                "Volatility Change",
+                                f"{impact.get('expected_volatility_change', 0):.2f}%"
+                            )
                         
                         with col3:
-                            st.write(f"{score:.1f}/100 ({weight}%)")
-                    
-                    # Risk metrics
-                    st.markdown("---")
-                    st.subheader("⚠️ Risk Metrics")
-                    
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.metric("VaR (95%)", f"{metrics.get('var_95', 0)*100:.2f}%")
-                        st.metric("VaR (99%)", f"{metrics.get('var_99', 0)*100:.2f}%")
-                    
-                    with col2:
-                        st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0)*100:.2f}%")
-                        st.metric("Volatility", f"{metrics.get('volatility', 0)*100:.2f}%")
-                    
-                    with col3:
-                        st.metric("Beta", f"{metrics.get('beta', 0):.3f}")
-                        st.metric("Jensen's Alpha", f"{metrics.get('jensen_alpha', 0)*100:.2f}%")
-                
-                # TAB 4: Investor Fit Score
-                with tab4:
-                    st.header("👤 Investor Fit Score (IFS)")
-                    
-                    st.metric(
-                        "Overall IFS",
-                        f"{ifs_score:.1f}/100",
-                        delta=ifs_result.get('category', 'Unknown')
-                    )
-                    
-                    st.info(ifs_result.get('interpretation', ''))
-                    
-                    # Investor indices radar
-                    indices = investor_profile.get('indices', {})
-                    st.plotly_chart(
-                        create_investor_indices_radar(indices),
-                        use_container_width=True
-                    )
-                    
-                    # Investor indices details
-                    st.subheader("📊 Investor Profile Indices")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.metric("Risk Capacity Index", f"{indices.get('risk_capacity_index', 0):.1f}/100")
-                        st.caption("Financial ability to bear risk")
+                            direction = impact.get('overall_impact_direction', 'Mixed')
+                            impact_color = "🟢" if direction == "Positive" else "🟡" if direction == "Mixed" else "🔴"
+                            st.metric("Overall Impact", f"{impact_color} {direction}")
                         
-                        st.metric("Risk Tolerance Index", f"{indices.get('risk_tolerance_index', 0):.1f}/100")
-                        st.caption("Psychological willingness to accept risk")
-                    
-                    with col2:
-                        st.metric("Behavioral Fragility", f"{indices.get('behavioral_fragility_index', 0):.1f}/100")
-                        st.caption("Likelihood of abandoning plan (lower is better)")
-                        
-                        st.metric("Time Horizon Strength", f"{indices.get('time_horizon_strength', 0):.1f}/100")
-                        st.caption("Ability to stay invested long-term")
-                    
-                    # Mismatches
-                    st.markdown("---")
-                    st.subheader("⚠️ Identified Mismatches")
-                    
-                    mismatches = ifs_result.get('mismatches', [])
-                    if mismatches:
-                        for mismatch in mismatches:
-                            severity = mismatch.get('severity', 0)
-                            if severity > 30:
-                                st.error(f"❌ {mismatch.get('message', '')}")
-                            elif severity > 15:
-                                st.warning(f"⚠️ {mismatch.get('message', '')}")
-                            else:
-                                st.info(f"ℹ️ {mismatch.get('message', '')}")
-                    else:
-                        st.success("✅ No significant mismatches detected")
-                    
-                    # Diagnostics
-                    st.markdown("---")
-                    st.subheader("📋 Fit Diagnostics")
-                    
-                    for diagnostic in ifs_result.get('diagnostics', []):
-                        if "❌" in diagnostic:
-                            st.error(diagnostic)
-                        elif "⚠️" in diagnostic:
-                            st.warning(diagnostic)
-                        else:
-                            st.success(diagnostic)
+                        st.info(f"**Confidence Level**: {impact.get('confidence', 'Unknown')} - Recommendations should be validated with your financial advisor.")
                 
-                # TAB 5: Portfolio Details
-                with tab5:
-                    st.header("💼 Complete Portfolio Details")
-                    
-                    if portfolio:
-                        df_full = pd.DataFrame(portfolio)
-                        st.dataframe(df_full, use_container_width=True)
-                        
-                        # Download button
-                        csv = df_full.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Download Portfolio Data",
-                            data=csv,
-                            file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
-                            mime="text/csv"
-                        )
-                    
-                    # Complete report
-                    st.markdown("---")
-                    st.subheader("📄 Complete Analysis Report")
-                    
-                    with st.expander("View JSON Report"):
-                        st.json(report)
-                
-                # Success message
-                st.sidebar.success("✅ Analysis completed successfully!")
-                st.sidebar.caption(f"Analyzed on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                
-            except Exception as e:
-                st.error(f"❌ Error during analysis: {str(e)}")
-                import traceback
-                with st.expander("Show Error Details"):
-                    st.code(traceback.format_exc())
+                except Exception as e:
+                    st.error(f"Error generating recommendations: {str(e)}")
+                    import traceback
+                    with st.expander("Show Error Details"):
+                        st.code(traceback.format_exc())
+            
+            # Success message
+            st.sidebar.success("✅ Analysis completed successfully!")
+            st.sidebar.caption(f"Analyzed on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            
+        except Exception as e:
+            st.error(f"❌ Error during analysis: {str(e)}")
+            import traceback
+            with st.expander("Show Error Details"):
+                st.code(traceback.format_exc())
 
 
 if __name__ == "__main__":

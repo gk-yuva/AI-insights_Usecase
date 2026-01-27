@@ -9,8 +9,14 @@ import numpy as np
 import requests
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
-import upstox_client
-from upstox_client.rest import ApiException
+try:
+    from upstox_client.rest import ApiException
+except ImportError:
+    try:
+        from upstox.rest import ApiException
+    except ImportError:
+        # Fallback if upstox libraries not available
+        ApiException = Exception
 from config import Config
 
 
@@ -198,33 +204,45 @@ class DataFetcher:
             data = self.fetch_upstox_data(ticker, exchange)
             if data is not None:
                 return data
-            print(f"Upstox fetch failed for {ticker}, falling back to yfinance...")
         
-        # Fallback to yfinance
+        # Fallback to yfinance with multiple ticker format attempts
         try:
             if ticker is None:
                 return None
             
-            # For yfinance, add .NS suffix if it's an Indian stock
-            yf_ticker = ticker
+            # Try different ticker formats for Indian stocks
+            ticker_attempts = [ticker]
             if exchange == 'NSE_EQ':
-                yf_ticker = f"{ticker}.NS"
+                ticker_attempts = [
+                    f"{ticker}.BO",      # BSE format
+                    f"{ticker}.NS",      # NSE format  
+                    ticker,              # Direct name
+                ]
             
-            stock = yf.Ticker(yf_ticker)
-            df = stock.history(start=self.start_date, end=self.end_date)
+            df = None
+            for yf_ticker in ticker_attempts:
+                try:
+                    stock = yf.Ticker(yf_ticker)
+                    temp_df = stock.history(start=self.start_date, end=self.end_date)
+                    
+                    if not temp_df.empty and len(temp_df) > 0:
+                        df = temp_df
+                        break
+                except:
+                    continue
             
-            if df.empty:
-                print(f"Warning: No data found for {yf_ticker}")
+            if df is None or df.empty:
                 return None
             
             # Convert to timezone-naive for consistency with MFAPI
-            df.index = df.index.tz_localize(None)
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
             
             # Return only adjusted close prices
             return df[['Close']].rename(columns={'Close': ticker})
         
         except Exception as e:
-            print(f"Error fetching data for {ticker}: {str(e)}")
+            # Silently return None for debugging ease
             return None
     
     def search_mutual_fund(self, fund_name: str) -> int:

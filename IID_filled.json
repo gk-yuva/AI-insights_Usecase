@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "investor_id": "user_20260104",
+  "investor_id": "user_20260119",
   "investor_profile": {
     "age_band": "30-35",
     "employment_type": "salaried",
@@ -82,8 +82,8 @@
     "decision_autonomy": "guided"
   },
   "meta": {
-    "profile_created_at": "2026-01-04T16:57:40.165636",
-    "last_updated_at": "2026-01-04T16:57:40.166635",
+    "profile_created_at": "2026-01-19T22:50:45.338005",
+    "last_updated_at": "2026-01-19T22:50:45.338005",
     "data_source": "user_declared"
   }
 }
